@@ -1,279 +1,334 @@
-# GROUP REPORT TEMPLATE — LAB DAY 08 (RAG PIPELINE)
+# GROUP REPORT TEMPLATE (SCORING-OPTIMIZED) — LAB DAY 08
 
-> Mục tiêu của template này: giúp nhóm viết báo cáo bám đúng rubric, có bằng chứng rõ ràng, tránh bị trừ điểm do claim mơ hồ hoặc không khớp code/log.
-
----
-
-## 0) Thông tin nhóm
-
-- **Tên nhóm:** [Điền tên nhóm]
-- **Thành viên:** [Tên 1], [Tên 2], [Tên 3], [Tên 4], [Tên 5]
-- **Tech Lead:** [Tên]
-- **Thời gian chạy grading chính thức:** [YYYY-MM-DD HH:mm]
-- **Cấu hình dùng cho grading:** [baseline/variant]
+Muc tieu cua template nay la bao phu day du rubric trong SCORING, khong bo sot hang muc nao, va moi claim deu co bang chung doi chieu duoc.
 
 ---
 
-## 1) Executive Summary (5-8 dòng)
+## 0) Cover Page
 
-**Bài toán:** Xây dựng pipeline RAG trả lời câu hỏi nội bộ CS + IT dựa trên tài liệu policy/SLA/SOP/FAQ, có citation và cơ chế abstain.
-
-**Kết quả chính:**
-- Pipeline đã chạy end-to-end qua 4 sprint: indexing -> retrieval -> grounded generation -> evaluation.
-- Index được build từ 5 tài liệu trong `data/docs` và lưu vào ChromaDB.
-- Trả lời có citation theo chunk đã retrieve; câu thiếu dữ liệu dùng cơ chế abstain để giảm hallucination.
-- Nhóm triển khai [dense baseline] và [variant: hybrid/rerank/query-transform], chạy so sánh A/B với cùng tập test.
-- Điểm raw grading đạt: **[x]/98** -> quy đổi **[y]/30**.
-
-> Lưu ý: chỉ ghi số liệu thật từ log/scorecard, không điền ước lượng.
+- Ten nhom: [..]
+- Thanh vien: [..]
+- Tech Lead: [..]
+- Cau hinh dung cho grading official: [dense/hybrid/rerank/query-transform]
+- Thoi gian chay grading questions: [YYYY-MM-DD HH:mm -> HH:mm]
+- Commit hash tong ket truoc 18:00: [..]
 
 ---
 
-## 2) Kiến trúc pipeline và quyết định kỹ thuật
+## 1) Executive Summary (150-220 tu)
 
-### 2.1 Sơ đồ pipeline
+Tom tat trong 1 doan duy nhat:
+1. Bai toan va pham vi tai lieu (5 docs).
+2. Kien truc pipeline da hoan thanh (Indexing -> Retrieval -> Generation -> Eval).
+3. Variant da chon va ly do (chi thay 1 bien).
+4. Ket qua chinh: raw grading, quy doi /30, diem doc /10, sprint /20.
+5. Rui ro con lai va huong cai tien tiep theo.
+
+Mau cau ket:
+"Nhom dat [x]/98 raw, quy doi [y]/30 cho phan grading; variant [..] cai thien [metric] tu [a] len [b], voi bang chung tai [file/log]."
+
+---
+
+## 2) Rubric Coverage Matrix (bat buoc)
+
+### 2.1 Tu cham diem nhom 60/60
+
+| Nhom tieu chi | Diem toi da | Diem tu cham | Bang chung cu the |
+|---|---:|---:|---|
+| Sprint Deliverables | 20 | [..] | [lenh chay + output] |
+| Group Documentation | 10 | [..] | [architecture + tuning-log] |
+| Grading Questions | 30 | [..] | [logs/grading_run.json] |
+| Tong nhom | 60 | [..] | [cong thuc quy doi] |
+
+### 2.2 Risk/Penalty tracker
+
+| Rui ro | Trang thai | Bang chung an toan |
+|---|---|---|
+| Hallucination trong grading | [Co/Khong] | [cac cau abstain/citation] |
+| Thieu file bat buoc | [Co/Khong] | [checklist artifact] |
+| Commit qua 18:00 cho code/log/docs | [Co/Khong] | [git log timestamp] |
+
+### 2.3 Bonus tracker (+5)
+
+| Bonus | Trang thai | Bang chung |
+|---|---|---|
+| LLM-as-Judge trong eval.py (+2) | [Dat/Chua] | [function/commit/output] |
+| Log grading du 10 cau + timestamp hop le (+1) | [Dat/Chua] | [logs/grading_run.json] |
+| gq06 full marks (+2) | [Dat/Chua] | [bang cham gq06] |
+
+---
+
+## 3) Architecture and Technical Decisions (khop docs/architecture.md)
+
+### 3.1 So do pipeline
 
 ```mermaid
 flowchart LR
-		A[Data docs] --> B[Preprocess]
-		B --> C[Chunking]
-		C --> D[Embedding]
-		D --> E[(ChromaDB)]
-		Q[User Query] --> F[Retriever]
-		E --> F
-		F --> G[Top-k chunks]
-		G --> H[Grounded Prompt]
-		H --> I[LLM]
-		I --> J[Answer + Citation]
-		J --> K[Eval Scorecard]
+    A[Raw Docs in data/docs] --> B[preprocess_document]
+    B --> C[chunk_document]
+    C --> D[get_embedding]
+    D --> E[(ChromaDB)]
+    Q[User Query] --> F[retrieve_dense/sparse/hybrid]
+    E --> F
+    F --> G[top_k_select chunks]
+    G --> H[build_grounded_prompt]
+    H --> I[call_llm]
+    I --> J[answer + sources + config]
+    J --> K[eval scorecard + grading log]
 ```
 
-### 2.2 Chunking decision
+### 3.2 Chunking decision
 
-- **Chiến lược:** [section-based / paragraph-aware]
-- **Chunk size:** [ví dụ 400 tokens]
-- **Overlap:** [ví dụ 80 tokens]
-- **Lý do chọn:**
-	1. [Giữ ngữ cảnh điều khoản, tránh cắt giữa ý]
-	2. [Tăng khả năng retrieve đúng bằng metadata theo section]
-	3. [Cân bằng giữa recall và độ tập trung context cho LLM]
-
-### 2.3 Metadata policy
-
-Mỗi chunk có tối thiểu 3 trường metadata bắt buộc:
-- `source`
-- `section`
-- `effective_date`
-
-Metadata bổ sung (nếu có):
-- `department`
-- `access`
-
-**Bằng chứng kiểm tra:**
-- [Dán output `list_chunks()` cho 2-3 chunk]
-- [Dán output `inspect_metadata_coverage()`]
-
-### 2.4 Retrieval config: baseline vs variant
-
-| Thành phần | Baseline | Variant | Lý do thay đổi |
+| Muc | Gia tri chot | Ly do | Evidence |
 |---|---|---|---|
-| Retrieval mode | [dense] | [hybrid/rerank/query-transform] | [vấn đề baseline cần sửa] |
-| top_k_search | [10] | [..] | [..] |
-| top_k_select | [3] | [..] | [..] |
-| use_rerank | [False] | [True/False] | [..] |
+| Strategy | [section/paragraph aware] | [..] | [output list_chunks] |
+| Chunk size | [.. tokens] | [..] | [config trong index.py] |
+| Overlap | [.. tokens] | [..] | [config trong index.py] |
+| Metadata | source, section, effective_date (+ optional) | bat buoc theo rubric | [inspect_metadata_coverage] |
 
-> Rule bắt buộc để điểm cao: nêu rõ nhóm chỉ đổi **một biến chính** trong A/B để giải thích được nguyên nhân cải thiện.
+### 3.3 Retrieval decision
 
----
-
-## 3) Sprint Deliverables (map trực tiếp với rubric 20 điểm)
-
-### Sprint 1 — Indexing
-
-- Trạng thái: [PASS/FAIL]
-- Lệnh chạy: `python index.py`
-- Bằng chứng:
-	- [Số lượng file đọc được]
-	- [Số chunk tạo ra]
-	- [Ảnh/chụp terminal output hoặc log ngắn]
-- Kết luận sprint 1: [1-2 câu]
-
-### Sprint 2 — Baseline RAG
-
-- Trạng thái: [PASS/FAIL]
-- Truy vấn kiểm thử bắt buộc:
-	1. `rag_answer("SLA ticket P1?")` -> [có citation [1]/không]
-	2. Câu out-of-doc -> [abstain đúng/không]
-- Bằng chứng:
-	- [1 output câu có citation]
-	- [1 output câu abstain]
-- Kết luận sprint 2: [1-2 câu]
-
-### Sprint 3 — Variant
-
-- Variant chọn: [hybrid/rerank/query-transform]
-- Trạng thái: [PASS/FAIL]
-- Lý do chọn biến: [nêu failure mode baseline]
-- Bằng chứng:
-	- [Output compare strategy hoặc top chunk trước/sau]
-	- [Ảnh hưởng đến recall/relevance]
-- Kết luận sprint 3: [1-2 câu]
-
-### Sprint 4 — Evaluation
-
-- Trạng thái: [PASS/FAIL]
-- Lệnh chạy: `python eval.py`
-- Bằng chứng:
-	- [Có tạo scorecard baseline]
-	- [Có tạo scorecard variant]
-	- [Có A/B delta và giải thích]
-- Kết luận sprint 4: [1-2 câu]
-
----
-
-## 4) Grading Questions (30 điểm) — kết quả thật từ log
-
-### 4.1 Thống kê tổng
-
-- Số câu đã chạy: [10/10]
-- Raw score: [x/98]
-- Quy đổi: `[x/98] * 30 = [y]/30`
-- Số câu Full/Partial/Zero/Penalty: [a/b/c/d]
-
-### 4.2 Bảng kết quả 10 câu
-
-| ID | Tóm tắt câu hỏi | Kết quả | Mức chấm | Ghi chú kỹ thuật |
+| Muc | Baseline | Variant | Chi thay 1 bien? | Ly do |
 |---|---|---|---|---|
-| gq01 | [..] | [Đúng/Sai một phần/Sai] | [Full/Partial/Zero/Penalty] | [retrieval/generation note] |
-| gq02 | [..] | [..] | [..] | [..] |
-| gq03 | [..] | [..] | [..] | [..] |
-| gq04 | [..] | [..] | [..] | [..] |
-| gq05 | [..] | [..] | [..] | [..] |
-| gq06 | [..] | [..] | [..] | [..] |
-| gq07 | [Abstain question] | [..] | [..] | [nêu rõ anti-hallucination] |
-| gq08 | [..] | [..] | [..] | [..] |
-| gq09 | [..] | [..] | [..] | [..] |
-| gq10 | [..] | [..] | [..] | [..] |
+| retrieval_mode | [dense] | [..] | [Co/Khong] | [..] |
+| top_k_search | [10] | [10/..] | [Co/Khong] | [..] |
+| top_k_select | [3] | [3/..] | [Co/Khong] | [..] |
+| use_rerank | [False] | [True/False] | [Co/Khong] | [..] |
 
-### 4.3 Phân tích câu khó nhất (khuyến nghị: gq06 hoặc gq07)
-
-- **Triệu chứng:** [pipeline trả sai/thiếu/chưa đủ điều kiện]
-- **Nguyên nhân gốc:** [indexing/retrieval/generation/eval]
-- **Bằng chứng:** [source chunks / log]
-- **Cách fix đã áp dụng:** [chi tiết ngắn]
-- **Kết quả sau fix:** [improve hay chưa]
+Neu thay nhieu hon 1 bien, phai giai trinh ro de tranh mat diem A/B explanation.
 
 ---
 
-## 5) A/B Comparison (bắt buộc có delta + giải thích)
+## 4) Sprint-by-Sprint Evidence (20 diem)
 
-### 5.1 Bảng metric baseline vs variant
+### 4.1 Sprint 1 (5 diem)
 
-| Metric | Baseline | Variant | Delta | Nhận xét |
-|---|---|---|---|---|
+Checklist minh chung:
+- [ ] `python index.py` chay khong loi
+- [ ] Tao duoc ChromaDB index
+- [ ] Moi chunk co >= 3 metadata bat buoc
+
+Bang ghi:
+| Tieu chi | Dat? | Bang chung (copy/paste output ngan) |
+|---|---|---|
+| index.py run OK (3d) | [Y/N] | [..] |
+| metadata du source/section/effective_date (2d) | [Y/N] | [..] |
+
+### 4.2 Sprint 2 (5 diem)
+
+Checklist minh chung:
+- [ ] `rag_answer("SLA ticket P1?")` co citation [1]
+- [ ] Cau ngoai docs abstain, khong bịa
+
+Bang ghi:
+| Tieu chi | Dat? | Bang chung |
+|---|---|---|
+| Answer co citation [1] (3d) | [Y/N] | [answer snippet + sources] |
+| Out-of-doc abstain (2d) | [Y/N] | [answer snippet] |
+
+### 4.3 Sprint 3 (5 diem)
+
+Checklist minh chung:
+- [ ] Implement duoc it nhat 1 variant
+- [ ] Co ket qua scorecard baseline va variant
+
+Bang ghi:
+| Tieu chi | Dat? | Bang chung |
+|---|---|---|
+| Variant implemented (3d) | [Y/N] | [ham + output compare] |
+| 2 scorecard co so lieu thuc (2d) | [Y/N] | [results/scorecard_*.md] |
+
+### 4.4 Sprint 4 (5 diem)
+
+Checklist minh chung:
+- [ ] `python eval.py` chay E2E khong crash
+- [ ] Co A/B delta ro + giai thich duoc nguyen nhan
+
+Bang ghi:
+| Tieu chi | Dat? | Bang chung |
+|---|---|---|
+| eval.py E2E 10 questions (3d) | [Y/N] | [output run_scorecard] |
+| A/B delta + explanation (2d) | [Y/N] | [bang so sanh + doan giai thich] |
+
+---
+
+## 5) Group Documentation Coverage (10 diem)
+
+### 5.1 architecture.md (5 diem)
+
+| Rubric con | Dat? | Bang chung |
+|---|---|---|
+| Chunk size/overlap/strategy + ly do (2d) | [Y/N] | [section nao trong docs] |
+| Retrieval baseline vs variant config (2d) | [Y/N] | [bang config] |
+| Co so do pipeline (1d) | [Y/N] | [mermaid/ascii] |
+
+### 5.2 tuning-log.md (5 diem)
+
+| Rubric con | Dat? | Bang chung |
+|---|---|---|
+| Chi ro 1 bien thay doi + ly do (2d) | [Y/N] | [muc Variant] |
+| So sanh >= 2 metrics (2d) | [Y/N] | [bang metric] |
+| Ket luan dua tren evidence (1d) | [Y/N] | [doan ket luan] |
+
+---
+
+## 6) Grading Questions Report (30 diem)
+
+### 6.1 Cong thuc tinh diem
+
+Raw total = [..]/98  
+Grading score = ([..] / 98) x 30 = [..]/30
+
+### 6.2 Bang 10 cau (chi dung du lieu tu logs/grading_run.json)
+
+| ID | Raw max | Ket qua nhom | Muc cham | Raw dat | Ghi chu ky thuat |
+|---|---:|---|---|---:|---|
+| gq01 | 10 | [..] | [Full/Partial/Zero/Penalty] | [..] | [..] |
+| gq02 | 10 | [..] | [..] | [..] | [..] |
+| gq03 | 10 | [..] | [..] | [..] | [..] |
+| gq04 | 8 | [..] | [..] | [..] | [..] |
+| gq05 | 10 | [..] | [..] | [..] | [..] |
+| gq06 | 12 | [..] | [..] | [..] | [..] |
+| gq07 | 10 | [..] | [..] | [..] | abstain/anti-hallucination |
+| gq08 | 10 | [..] | [..] | [..] | [..] |
+| gq09 | 8 | [..] | [..] | [..] | [..] |
+| gq10 | 10 | [..] | [..] | [..] | [..] |
+| Tong | 98 |  |  | [..] |  |
+
+### 6.3 Deep-dive 2 cau bat buoc
+
+#### Case A: gq06 (cross-doc multi-hop)
+- Trieu chung:
+- Root cause (indexing/retrieval/generation):
+- Cac chunks duoc dung:
+- Cach fix/khong fix kip:
+- Bai hoc:
+
+#### Case B: gq07 (abstain)
+- Cau tra loi chinh xac mong doi: "khong co du lieu trong tai lieu"
+- Dau hieu an toan: co noi ro "khong du du lieu" + khong bịa so
+- Neu bi tru diem: giai thich nguyen nhan va patch phong ngua lan sau
+
+---
+
+## 7) A/B Comparison (bat buoc cho Sprint 4)
+
+### 7.1 Metric table
+
+| Metric | Baseline | Variant | Delta | Ket luan ngan |
+|---|---:|---:|---:|---|
 | Faithfulness | [..] | [..] | [..] | [..] |
 | Answer Relevance | [..] | [..] | [..] | [..] |
 | Context Recall | [..] | [..] | [..] | [..] |
 | Completeness | [..] | [..] | [..] | [..] |
 
-### 5.2 Tại sao chọn variant này
+### 7.2 Why this variant wins/loses
 
-1. Baseline fail ở đâu: [1-2 lỗi rõ ràng].
-2. Variant tác động cơ chế nào: [keyword match / rerank / query rewrite].
-3. Bằng chứng: [metric tăng ở câu nào, bao nhiêu].
-4. Trade-off: [latency/cost/độ ổn định].
+1. Baseline fail mode ro nhat la gi?
+2. Bien thay doi tac dong vao khau nao?
+3. Cau nao duoc cai thien ro nhat (ID + diem truoc/sau)?
+4. Trade-off: do tre, chi phi token, do on dinh output.
 
-> Câu mẫu mạnh để giảng viên thấy reasoning rõ:
-> "Chúng tôi chỉ thay đổi retrieval mode từ dense sang hybrid, giữ nguyên top_k và prompt, nên phần tăng Context Recall +0.xx có thể quy về cơ chế kết hợp semantic + keyword."
-
----
-
-## 6) Anti-hallucination & gq07 (điểm rủi ro cao nhất)
-
-- Chính sách hệ thống khi thiếu bằng chứng: [abstain message cụ thể]
-- Cách ép grounded answer trong prompt: [quote prompt rule]
-- Cơ chế kiểm soát trước khi trả lời:
-	1. [Kiểm tra số chunk liên quan tối thiểu]
-	2. [Nếu không đủ chứng cứ -> abstain]
-	3. [Luôn yêu cầu citation]
-- Kết quả ở gq07: [abstain rõ lý do / còn mơ hồ / bị hallucinate]
-- Hành động phòng ngừa tiếp theo: [1-2 mục]
+Mau cau scoring-friendly:
+"Chung toi giu nguyen chunking, prompt, top_k_select; chi doi retrieval_mode tu dense sang hybrid. Delta Context Recall = +[x], giup [IDs] tu Partial len Full."
 
 ---
 
-## 7) Bảng đối chiếu file nộp và deadline
+## 8) Deadline and Artifact Compliance (critical)
 
-| File bắt buộc | Trạng thái | Commit trước 18:00 | Ghi chú |
-|---|---|---|---|
-| `index.py` | [OK/Thiếu] | [Có/Không] | [..] |
-| `rag_answer.py` | [OK/Thiếu] | [Có/Không] | [..] |
-| `eval.py` | [OK/Thiếu] | [Có/Không] | [..] |
-| `docs/architecture.md` | [OK/Thiếu] | [Có/Không] | [..] |
-| `docs/tuning-log.md` | [OK/Thiếu] | [Có/Không] | [..] |
-| `logs/grading_run.json` | [OK/Thiếu] | [Có/Không] | [..] |
-| `results/scorecard_baseline.md` | [OK/Thiếu] | [Có/Không] | [..] |
-| `results/scorecard_variant.md` | [OK/Thiếu] | [Có/Không] | [..] |
-
-> Mẹo an toàn điểm: không claim file nào nếu chưa tồn tại hoặc chưa có số liệu thật.
-
----
-
-## 8) Phân công đóng góp (để hỗ trợ đối chiếu report cá nhân)
-
-| Thành viên | Vai trò | Công việc cụ thể | Bằng chứng (file/commit/output) |
-|---|---|---|---|
-| [Tên] | [Tech Lead] | [..] | [..] |
-| [Tên] | [Eval Owner] | [..] | [..] |
-| [Tên] | [LLM] | [..] | [..] |
-| [Tên] | [Retrieval] | [..] | [..] |
-| [Tên] | [QA/Docs] | [..] | [..] |
+| Artifact bat buoc | Co file? | Commit truoc 18:00? | Nguoi phu trach | Bang chung |
+|---|---|---|---|---|
+| index.py | [Y/N] | [Y/N] | [..] | [git log] |
+| rag_answer.py | [Y/N] | [Y/N] | [..] | [git log] |
+| eval.py | [Y/N] | [Y/N] | [..] | [git log] |
+| logs/grading_run.json | [Y/N] | [Y/N] | [..] | [timestamp 17:00-18:00] |
+| results/scorecard_baseline.md | [Y/N] | [Y/N] | [..] | [..] |
+| results/scorecard_variant.md | [Y/N] | [Y/N] | [..] | [..] |
+| docs/architecture.md | [Y/N] | [Y/N] | [..] | [..] |
+| docs/tuning-log.md | [Y/N] | [Y/N] | [..] | [..] |
+| reports/group_report.md | [Y/N] | duoc sau 18:00 | [..] | [..] |
 
 ---
 
-## 9) Kết luận nhóm (ngắn, có evidence)
+## 9) Contribution Evidence (ho tro khong mat diem ca nhan)
 
-- Điều làm tốt nhất: [1-2 ý có số liệu].
-- Điểm còn yếu: [1-2 ý].
-- Kế hoạch cải tiến nếu có thêm 1 buổi:
-	1. [Cải tiến 1 + expected impact]
-	2. [Cải tiến 2 + expected impact]
+Muc nay de dong bo voi bao cao ca nhan, tranh claim khong khop code/commit.
+
+| Thanh vien | Vai tro | Cong viec cu the | File/ham lien quan | Commit hash | Giai thich duoc quyet dinh ky thuat? |
+|---|---|---|---|---|---|
+| [..] | [Tech Lead] | [..] | [..] | [..] | [Y/N] |
+| [..] | [Eval Owner] | [..] | [..] | [..] | [Y/N] |
+| [..] | [LLM] | [..] | [..] | [..] | [Y/N] |
+| [..] | [Retrieval] | [..] | [..] | [..] | [Y/N] |
+| [..] | [QA/Docs] | [..] | [..] | [..] | [Y/N] |
 
 ---
 
-## 10) Phụ lục (copy/paste evidence)
+## 10) Risk Register and Mitigation
 
-### A. Output tiêu biểu `python index.py`
+| Risk | Muc do | Anh huong diem | Giam thieu da lam | Ke hoach tiep theo |
+|---|---|---|---|---|
+| Hybrid/rerank chua on dinh | [Low/Med/High] | Sprint3, Sprint4 | [..] | [..] |
+| Eval metric con thu cong | [Low/Med/High] | Bonus + tinh nhat quan | [..] | [..] |
+| Hallucination o cau khong co du lieu | [Low/Med/High] | Grading penalty | [..] | [..] |
+
+---
+
+## 11) Final Conclusion (6-10 dong)
+
+- Tong ket muc tieu da dat theo diem so.
+- Neu chua dat 60/60, neu ro ly do objective.
+- Chot 2 cai tien co evidence de lam tiep (khong noi chung chung).
+
+---
+
+## 12) Appendix — Raw Evidence Dump
+
+### A. Output python index.py
 
 ```text
-[Dán output thật]
+[paste output that proves index created + metadata coverage]
 ```
 
-### B. Output tiêu biểu `rag_answer()`
+### B. Output rag_answer (1 citation case + 1 abstain case)
 
 ```text
-[Dán 1 câu có citation và 1 câu abstain]
+[paste output]
 ```
 
-### C. Output tiêu biểu `python eval.py`
+### C. Output python eval.py
 
 ```text
-[Dán output thật]
+[paste output]
 ```
 
-### D. Snapshot bảng điểm
+### D. Scorecards
 
-- Baseline: [dán bảng]
-- Variant: [dán bảng]
-- Delta: [dán bảng]
+- Baseline summary: [paste from results/scorecard_baseline.md]
+- Variant summary: [paste from results/scorecard_variant.md]
+- Delta summary: [paste from compare_ab]
+
+### E. Grading log snippet
+
+```json
+[paste 2-3 representative entries from logs/grading_run.json]
+```
+
+### F. Git proof snippet
+
+```text
+[paste git log --name-only --pretty output for deadline proof]
+```
 
 ---
 
-## Checklist nộp nhanh trước khi submit
+## Final pre-submit checklist
 
-- [ ] Không có claim nào thiếu bằng chứng.
-- [ ] Bảng A/B có số thật, có delta, có giải thích nguyên nhân.
-- [ ] Có phân tích ít nhất 1 failure mode theo root cause.
-- [ ] Nêu rõ chiến lược chống hallucination, đặc biệt cho câu abstain.
-- [ ] Đối chiếu đầy đủ file bắt buộc theo rubric.
-- [ ] Câu chữ ngắn, rõ, có dữ liệu thay vì mô tả chung chung.
+- [ ] Report map 1-1 den tat ca rubric 60 diem nhom.
+- [ ] Moi diem tu cham deu co bang chung trong Appendix.
+- [ ] Co bang gq01-gq10 va cong thuc quy doi /30.
+- [ ] Co phan gq07 abstain va anti-hallucination rieng.
+- [ ] Co A/B delta + giai thich nguyen nhan theo 1 bien thay doi.
+- [ ] Co bang doi chieu artifact + deadline 18:00.
+- [ ] Co bang dong bo contribution de ho tro bao cao ca nhan.
 
