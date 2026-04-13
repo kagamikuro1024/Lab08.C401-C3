@@ -1,0 +1,142 @@
+               
+======================================================================
+Sprint 1: Build RAG Index
+======================================================================
+
+Bước 1: Kiểm tra tài liệu
+Tìm thấy 5 files trong C:\Project\Vin AI\Day08\Lab08.C401-C3\lab\data\docs:
+  ✓ access_control_sop.txt (2941 bytes)
+  ✓ hr_leave_policy.txt (2562 bytes)
+  ✓ it_helpdesk_faq.txt (2718 bytes)
+  ✓ policy_refund_v4.txt (2345 bytes)
+  ✓ sla_p1_2026.txt (2775 bytes)
+
+Bước 2: Test preprocess + chunking
+
+Test file: access_control_sop.txt
+  Metadata: {'source': 'it/access-control-sop.md', 'section': '', 'department': 'IT Security', 'effective_date': '2026-01-01', 'access': 'internal'}
+  Tổng text len: 2244 chars
+  Tổng chunks: 7
+
+  [Chunk 1]
+    Section: Section 1: Phạm vi và mục đích
+    Length: 151 chars
+    Text: Tài liệu này quy định quy trình cấp phép truy cập vào các hệ thống nội bộ của công ty.
+Áp dụng cho t...
+
+  [Chunk 2]
+    Section: Section 2: Phân cấp quyền truy cập
+    Length: 620 chars
+    Text: Level 1 — Read Only:
+Áp dụng cho: Tất cả nhân viên mới trong 30 ngày đầu.
+Phê duyệt: Line Manager.
+T...
+
+  [Chunk 3]
+    Section: Section 3: Quy trình yêu cầu cấp quyền
+    Length: 301 chars
+    Text: Bước 1: Nhân viên tạo Access Request ticket trên Jira (project IT-ACCESS).
+Bước 2: Line Manager phê ...
+
+
+Bước 3: Build index hoàn chỉnh
+
+=== BUILD INDEX ===
+Docs dir: C:\Project\Vin AI\Day08\Lab08.C401-C3\lab\data\docs
+Tìm thấy 5 files:
+
+  Processing: access_control_sop.txt
+    Metadata: {'source': 'it/access-control-sop.md', 'section': '', 'department': 'IT Security', 'effective_date': '2026-01-01', 'access': 'internal'}
+    Chunks: 7
+  [init] Loading OpenAI client...
+    ✓ Upserted 7 chunks
+
+  Processing: hr_leave_policy.txt
+    Metadata: {'source': 'hr/leave-policy-2026.pdf', 'section': '', 'department': 'HR', 'effective_date': '2026-01-01', 'access': 'internal'}
+    Chunks: 5
+    ✓ Upserted 5 chunks
+
+  Processing: it_helpdesk_faq.txt
+    Metadata: {'source': 'support/helpdesk-faq.md', 'section': '', 'department': 'IT', 'effective_date': '2026-01-20', 'access': 'internal'}
+    Chunks: 6
+    ✓ Upserted 6 chunks
+
+  Processing: policy_refund_v4.txt
+    Metadata: {'source': 'policy/refund-v4.pdf', 'section': '', 'department': 'CS', 'effective_date': '2026-02-01', 'access': 'internal'}
+    Chunks: 6
+    ✓ Upserted 6 chunks
+
+  Processing: sla_p1_2026.txt
+    Metadata: {'source': 'support/sla-p1-2026.pdf', 'section': '', 'department': 'IT', 'effective_date': '2026-01-15', 'access': 'internal'}
+    Chunks: 5
+    ✓ Upserted 5 chunks
+
+==================================================
+✓ Hoàn thành! Index chứa 29 chunks
+Lưu tại: C:\Project\Vin AI\Day08\Lab08.C401-C3\lab\chroma_db
+==================================================
+
+
+Bước 4: Kiểm tra index quality
+
+=== Top 3 chunks trong index ===
+Tổng chunks: 29
+
+[Chunk 1]
+  Source: it/access-control-sop.md
+  Section: Section 1: Phạm vi và mục đích
+  Effective Date: 2026-01-01
+  Department: IT Security
+  Access: internal
+  Text (151 chars): Tài liệu này quy định quy trình cấp phép truy cập vào các hệ thống nội bộ của công ty.
+Áp dụng cho tất cả nhân viên, contractor, và third-party vendor...
+
+[Chunk 2]
+  Source: it/access-control-sop.md
+  Section: Section 2: Phân cấp quyền truy cập
+  Effective Date: 2026-01-01
+  Department: IT Security
+  Access: internal
+  Text (620 chars): Level 1 — Read Only:
+Áp dụng cho: Tất cả nhân viên mới trong 30 ngày đầu.
+Phê duyệt: Line Manager.
+Thời gian xử lý: 1 ngày làm việc.
+
+Level 2 — Standa...
+
+[Chunk 3]
+  Source: it/access-control-sop.md
+  Section: Section 3: Quy trình yêu cầu cấp quyền
+  Effective Date: 2026-01-01
+  Department: IT Security
+  Access: internal
+  Text (301 chars): Bước 1: Nhân viên tạo Access Request ticket trên Jira (project IT-ACCESS).
+Bước 2: Line Manager phê duyệt yêu cầu trong 1 ngày làm việc.
+Bước 3: IT Ad...
+
+
+=== METADATA COVERAGE ===
+Tổng chunks: 29
+
+Phân bố theo Department:
+  CS: 6 chunks
+  HR: 5 chunks
+  IT: 11 chunks
+  IT Security: 7 chunks
+
+Phân bố theo Source:
+  hr/leave-policy-2026.pdf: 5 chunks
+  it/access-control-sop.md: 7 chunks
+  policy/refund-v4.pdf: 6 chunks
+  support/helpdesk-faq.md: 6 chunks
+  support/sla-p1-2026.pdf: 5 chunks
+
+Phân bố theo Access Level:
+  internal: 29 chunks
+
+Missing effective_date: 0 chunks
+✓ Tất cả chunks có đủ metadata
+
+
+✅ SPRINT 1 HOÀN THÀNH!
+Bước tiếp theo: Implement retrieval functions trong rag_answer.py
