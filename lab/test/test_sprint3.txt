@@ -1,0 +1,257 @@
+============================================================
+Sprint 2 + 3: RAG Answer Pipeline
+============================================================
+
+--- Sprint 2: Test Baseline (Dense) ---
+
+Query: SLA xử lý ticket P1 là bao lâu?
+  [init] Loading OpenAI client...
+
+[RAG] Query: SLA xử lý ticket P1 là bao lâu?
+[RAG] Retrieved 10 candidates (mode=dense)
+  [1] score=0.618 | support/sla-p1-2026.pdf
+  [2] score=0.485 | support/sla-p1-2026.pdf
+  [3] score=0.468 | policy/refund-v4.pdf
+[RAG] After select: 3 chunks
+
+[RAG] Prompt:
+Answer only from the retrieved context below.
+If the context is insufficient to answer the question, say you do not know and do not make up information.
+Cite the source field (in brackets like [1]) when possible.
+Keep your answer short, clear, and factual.
+Respond in the same language as the question.
+
+Question: SLA xử lý ticket P1 là bao lâu?
+
+Context:
+[1] support/sla-p1-2026.pdf | Phần 2: SLA theo mức độ ưu tiên | score=0.62
+Ticket P1:
+- Phản hồi ban đầu (first response): 15 phút kể từ khi tic...
+
+Answer: SLA xử lý ticket P1 là 4 giờ cho việc khắc phục sau phản hồi ban đầu trong 15 phút kể từ khi ticket được tạo [1].
+Sources: ['support/sla-p1-2026.pdf', 'policy/refund-v4.pdf']
+
+Query: Khách hàng có thể yêu cầu hoàn tiền trong bao nhiêu ngày?
+
+[RAG] Query: Khách hàng có thể yêu cầu hoàn tiền trong bao nhiêu ngày?
+[RAG] Retrieved 10 candidates (mode=dense)
+  [1] score=0.605 | policy/refund-v4.pdf
+  [2] score=0.527 | policy/refund-v4.pdf
+  [3] score=0.514 | policy/refund-v4.pdf
+[RAG] After select: 3 chunks
+
+[RAG] Prompt:
+Answer only from the retrieved context below.
+If the context is insufficient to answer the question, say you do not know and do not make up information.
+Cite the source field (in brackets like [1]) when possible.
+Keep your answer short, clear, and factual.
+Respond in the same language as the question.
+
+Question: Khách hàng có thể yêu cầu hoàn tiền trong bao nhiêu ngày?
+
+Context:
+[1] policy/refund-v4.pdf | Điều 2: Điều kiện được hoàn tiền | score=0.61
+Khách hàng được quyền yêu cầu hoàn tiền khi đ...
+
+Answer: Khách hàng có thể yêu cầu hoàn tiền trong vòng 7 ngày làm việc kể từ thời điểm xác nhận đơn hàng [1].
+Sources: ['policy/refund-v4.pdf']
+
+Query: Ai phải phê duyệt để cấp quyền Level 3?
+
+[RAG] Query: Ai phải phê duyệt để cấp quyền Level 3?
+[RAG] Retrieved 10 candidates (mode=dense)
+  [1] score=0.566 | it/access-control-sop.md
+  [2] score=0.506 | it/access-control-sop.md
+  [3] score=0.478 | hr/leave-policy-2026.pdf
+[RAG] After select: 3 chunks
+
+[RAG] Prompt:
+Answer only from the retrieved context below.
+If the context is insufficient to answer the question, say you do not know and do not make up information.
+Cite the source field (in brackets like [1]) when possible.
+Keep your answer short, clear, and factual.
+Respond in the same language as the question.
+
+Question: Ai phải phê duyệt để cấp quyền Level 3?
+
+Context:
+[1] it/access-control-sop.md | Section 2: Phân cấp quyền truy cập | score=0.57
+Level 1 — Read Only:
+Áp dụng cho: Tất cả nhân viên mới tr...
+
+Answer: Để cấp quyền Level 3, cần có sự phê duyệt của Line Manager, IT Admin và IT Security [1].
+Sources: ['it/access-control-sop.md', 'hr/leave-policy-2026.pdf']
+
+Query: ERR-403-AUTH là lỗi gì?
+
+[RAG] Query: ERR-403-AUTH là lỗi gì?
+[RAG] Retrieved 10 candidates (mode=dense)
+  [1] score=0.371 | it/access-control-sop.md
+  [2] score=0.349 | it/access-control-sop.md
+  [3] score=0.345 | support/sla-p1-2026.pdf
+[RAG] After select: 3 chunks
+
+[RAG] Prompt:
+Answer only from the retrieved context below.
+If the context is insufficient to answer the question, say you do not know and do not make up information.
+Cite the source field (in brackets like [1]) when possible.
+Keep your answer short, clear, and factual.
+Respond in the same language as the question.
+
+Question: ERR-403-AUTH là lỗi gì?
+
+Context:
+[1] it/access-control-sop.md | Section 3: Quy trình yêu cầu cấp quyền | score=0.37
+Bước 1: Nhân viên tạo Access Request ticket trên Jira (project IT-ACC...
+
+Answer: ERR-403-AUTH là lỗi liên quan đến việc không có quyền truy cập, thường xảy ra khi người dùng không được phép thực hiện hành động nào đó trong hệ thống. Tuy nhiên, thông tin cụ thể về lỗi này không có trong ngữ cảnh đã cung cấp. Do đó, tôi không biết thêm chi tiết.
+Sources: ['it/access-control-sop.md', 'support/sla-p1-2026.pdf']
+
+
+============================================================
+Sprint 3: So sánh retrieval strategies
+============================================================
+
+====================================================================================================
+A/B COMPARISON: Dense vs Sparse vs Hybrid Retrieval
+Query: SLA P1 xử lý bao lâu?
+====================================================================================================
+
+--- DENSE RETRIEVAL ---
+Sources: support/sla-p1-2026.pdf, support/helpdesk-faq.md
+Chunks used: 3
+  [1] support/sla-p1-2026.pdf | Phần 2: SLA theo mức độ ưu tiên | score=0.509
+  [2] support/helpdesk-faq.md | Section 4: Thiết bị và phần cứng | score=0.483
+  [3] support/sla-p1-2026.pdf | Phần 3: Quy trình xử lý sự cố P1 | score=0.478
+
+Answer: SLA P1 xử lý trong 4 giờ kể từ khi ticket được tạo [1]....
+
+--- SPARSE RETRIEVAL ---
+Sources: support/sla-p1-2026.pdf, policy/refund-v4.pdf
+Chunks used: 3
+  [1] support/sla-p1-2026.pdf | Phần 5: Lịch sử phiên bản | score=6.673
+  [2] support/sla-p1-2026.pdf | Phần 2: SLA theo mức độ ưu tiên | score=5.110
+  [3] policy/refund-v4.pdf | Điều 4: Quy trình xử lý yêu cầu hoàn tiề | score=4.701
+
+Answer: SLA P1 xử lý trong 4 giờ [2]....
+
+--- HYBRID RETRIEVAL ---
+Sources: support/sla-p1-2026.pdf
+Chunks used: 3
+  [1] support/sla-p1-2026.pdf | Phần 2: SLA theo mức độ ưu tiên | score=0.017
+  [2] support/sla-p1-2026.pdf | Phần 5: Lịch sử phiên bản | score=0.016
+  [3] support/sla-p1-2026.pdf | Phần 3: Quy trình xử lý sự cố P1 | score=0.016
+
+Answer: SLA P1 xử lý trong 4 giờ kể từ khi ticket được tạo [1]....
+
+
+====================================================================================================
+METRIC COMPARISON TABLE
+====================================================================================================
+Metric                    | Dense                     | Sparse                    | Hybrid                   
+------------------------------------------------------------------------------------------------------
+Chunks used               | 3                         | 3                         | 3                        
+Top source                | support/sla-p1-2026.pdf   | support/sla-p1-2026.pdf   | support/sla-p1-2026.pdf  
+Top chunk score           | 0.509         | 6.673         | 0.017
+Answer length             | 55                        | 29                        | 55                       
+====================================================================================================
+
+====================================================================================================
+A/B COMPARISON: Dense vs Sparse vs Hybrid Retrieval
+Query: ERR-403 là gì?
+====================================================================================================
+
+--- DENSE RETRIEVAL ---
+Sources: support/sla-p1-2026.pdf, it/access-control-sop.md, hr/leave-policy-2026.pdf
+Chunks used: 3
+  [1] hr/leave-policy-2026.pdf | Phần 4: Remote work policy | score=0.317
+  [2] support/sla-p1-2026.pdf | Phần 1: Định nghĩa mức độ ưu tiên | score=0.308
+  [3] it/access-control-sop.md | Section 6: Audit và review định kỳ | score=0.299
+
+Answer: Tôi không biết....
+
+--- SPARSE RETRIEVAL ---
+Sources: support/helpdesk-faq.md
+Chunks used: 3
+  [1] support/helpdesk-faq.md | Section 5: Email và lịch | score=4.798
+  [2] support/helpdesk-faq.md | Section 3: Phần mềm và license | score=1.792
+  [3] support/helpdesk-faq.md | Section 2: VPN và kết nối từ xa | score=1.601
+
+Answer: Tôi không biết....
+
+--- HYBRID RETRIEVAL ---
+Sources: it/access-control-sop.md, support/helpdesk-faq.md, hr/leave-policy-2026.pdf
+Chunks used: 3
+  [1] hr/leave-policy-2026.pdf | Phần 4: Remote work policy | score=0.016
+  [2] it/access-control-sop.md | Section 2: Phân cấp quyền truy cập | score=0.016
+  [3] support/helpdesk-faq.md | Section 5: Email và lịch | score=0.016
+
+Answer: Tôi không biết ERR-403 là gì....
+
+
+====================================================================================================
+METRIC COMPARISON TABLE
+====================================================================================================
+Metric                    | Dense                     | Sparse                    | Hybrid                   
+------------------------------------------------------------------------------------------------------
+Chunks used               | 3                         | 3                         | 3                        
+Top source                | support/sla-p1-2026.pdf   | support/helpdesk-faq.md   | it/access-control-sop.md 
+Top chunk score           | 0.317         | 4.798         | 0.016
+Answer length             | 15                        | 15                        | 29                       
+====================================================================================================
+
+====================================================================================================
+A/B COMPARISON: Dense vs Sparse vs Hybrid Retrieval
+Query: Hoàn tiền mất bao lâu?
+====================================================================================================
+
+--- DENSE RETRIEVAL ---
+Sources: it/access-control-sop.md, policy/refund-v4.pdf
+Chunks used: 3
+  [1] policy/refund-v4.pdf | Điều 3: Điều kiện áp dụng và ngoại lệ | score=0.500
+  [2] policy/refund-v4.pdf | Điều 5: Hình thức hoàn tiền | score=0.431
+  [3] it/access-control-sop.md | Section 5: Thu hồi quyền truy cập | score=0.418
+
+Answer: Thời gian hoàn tiền không được nêu rõ trong các tài liệu đã cung cấp. Tôi không biết....
+
+--- SPARSE RETRIEVAL ---
+Sources: policy/refund-v4.pdf
+Chunks used: 3
+  [1] policy/refund-v4.pdf | Điều 5: Hình thức hoàn tiền | score=5.426
+  [2] policy/refund-v4.pdf | Điều 1: Phạm vi áp dụng | score=3.786
+  [3] policy/refund-v4.pdf | Điều 3: Điều kiện áp dụng và ngoại lệ | score=3.657
+
+Answer: Tôi không biết....
+
+--- HYBRID RETRIEVAL ---
+Sources: policy/refund-v4.pdf
+Chunks used: 3
+  [1] policy/refund-v4.pdf | Điều 5: Hình thức hoàn tiền | score=0.017
+  [2] policy/refund-v4.pdf | Điều 3: Điều kiện áp dụng và ngoại lệ | score=0.016
+  [3] policy/refund-v4.pdf | Điều 1: Phạm vi áp dụng | score=0.016
+
+Answer: Tôi không biết....
+
+
+====================================================================================================
+METRIC COMPARISON TABLE
+====================================================================================================
+Metric                    | Dense                     | Sparse                    | Hybrid                   
+------------------------------------------------------------------------------------------------------
+Chunks used               | 3                         | 3                         | 3                        
+Top source                | it/access-control-sop.md  | policy/refund-v4.pdf      | policy/refund-v4.pdf     
+Top chunk score           | 0.500         | 5.426         | 0.017
+Answer length             | 85                        | 15                        | 15                       
+====================================================================================================
+
+
+============================================================
+✅ SPRINT 3 HOÀN THÀNH: HYBRID VARIANT TESTED
+============================================================
+
+Kết luận: Hybrid retrieval kết hợp Dense + Sparse bằng RRF
+  - Dense: Xử lý semantic/nghĩa câu hỏi
+  - Sparse (BM25): Xử lý keyword/mã lỗi (P1, ERR-403, refund, Level 3)
+  - Hybrid (RRF): Tăng recall và relevance
+
+Bước tiếp theo: Ghi lý do vào docs/tuning-log.md
