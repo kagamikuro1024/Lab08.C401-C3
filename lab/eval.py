@@ -42,12 +42,13 @@ BASELINE_CONFIG = {
 
 # Cấu hình variant (Sprint 3 — điều chỉnh theo lựa chọn của nhóm)
 # TODO Sprint 4: Cập nhật VARIANT_CONFIG theo variant nhóm đã implement
+# Variant: Hybrid retrieval (Dense + BM25) WITHOUT rerank
 VARIANT_CONFIG = {
     "retrieval_mode": "hybrid",   # Hoặc "dense" nếu chỉ đổi rerank
     "top_k_search": 10,
     "top_k_select": 3,
-    "use_rerank": True,           # Hoặc False nếu variant là hybrid không rerank
-    "label": "variant_hybrid_rerank",
+    "use_rerank": False,
+    "label": "variant_hybrid_no_rerank",
 }
 
 
@@ -90,10 +91,75 @@ def score_faithfulness(
     """
     # TODO Sprint 4: Implement scoring
     # Tạm thời trả về None (yêu cầu chấm thủ công)
-    return {
-        "score": None,
-        "notes": "TODO: Chấm thủ công hoặc implement LLM-as-Judge",
-    }
+    try:
+        from openai import OpenAI
+        import os
+        
+        api_key = os.getenv("OPENAI_API_KEY")
+        if not api_key:
+            # Fallback: Return placeholder
+            return {
+                "score": None,
+                "notes": "OPENAI_API_KEY not configured",
+            }
+        
+        client = OpenAI(api_key=api_key)
+        
+        # Build context text from chunks
+        context_text = "\n\n".join([
+            f"[{i+1}] {chunk['metadata'].get('source', 'unknown')}\n{chunk.get('text', '')}"
+            for i, chunk in enumerate(chunks_used[:5])  # Limit to top 5 for token budget
+        ])
+        
+        # Create grading prompt
+        grading_prompt = f"""
+You are an evaluator for a Retrieval Augmented Generation (RAG) system.
+Assess whether the given answer is grounded in the provided context.
+
+Context (Retrieved Documents):
+{context_text}
+
+Answer to Evaluate:
+{answer}
+
+Rate the faithfulness on a scale of 1-5:
+5 = All information in the answer is supported by the context
+4 = Almost all information is grounded, 1 minor detail is uncertain
+3 = Most information is grounded, but some information might be from model knowledge
+2 = Several pieces of information are not in the context
+1 = Answer is mostly made up, little grounding in context
+
+Respond ONLY with a JSON object in this format:
+{{"score": <integer 1-5>, "reason": "<brief explanation"}}
+"""
+        
+        response = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[{"role": "user", "content": grading_prompt}],
+            temperature=0,
+            max_tokens=200,
+        )
+        
+        # Parse response
+        import json
+        try:
+            result = json.loads(response.choices[0].message.content)
+            return {
+                "score": result.get("score"),
+                "notes": result.get("reason", "LLM-graded for faithfulness"),
+            }
+        except (json.JSONDecodeError, KeyError):
+            content = response.choices[0].message.content
+            return {
+                "score": None,
+                "notes": f"Grading response: {content[:100]}",
+            }
+    
+    except Exception as e:
+        return {
+            "score": None,
+            "notes": f"Error in LLM grading: {str(e)[:80]}",
+        }
 
 
 def score_answer_relevance(
@@ -113,10 +179,67 @@ def score_answer_relevance(
 
     TODO Sprint 4: Implement tương tự score_faithfulness
     """
-    return {
-        "score": None,
-        "notes": "TODO: Implement score_answer_relevance",
-    }
+    try:
+        from openai import OpenAI
+        import os
+        
+        api_key = os.getenv("OPENAI_API_KEY")
+        if not api_key:
+            # Fallback: Return placeholder
+            return {
+                "score": None,
+                "notes": "OPENAI_API_KEY not configured",
+            }
+        
+        client = OpenAI(api_key=api_key)
+        
+        # Create grading prompt
+        grading_prompt = f"""
+Given the user's question and the model's answer, rate the answer's relevance to the question.
+
+Question: {query}
+
+Answer: {answer}
+
+Rate relevance on a scale of 1-5:
+5 = Answer directly addresses the question and covers all key points
+4 = Mostly relevant, addresses the question correctly but lacks some details
+3 = Somewhat relevant, addresses the question but misses key points
+2 = Partially irrelevant, touches on the question but misses the main point
+1 = Not relevant, does not address the question
+
+Respond ONLY with a JSON object in this format:
+{{"score": <integer 1-5>, "reason": "<brief explanation>"}}
+"""
+        
+        response = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[{"role": "user", "content": grading_prompt}],
+            temperature=0,
+            max_tokens=200,
+        )
+        
+        # Parse response
+        import json
+        try:
+            result = json.loads(response.choices[0].message.content)
+            return {
+                "score": result.get("score"),
+                "notes": result.get("reason", "LLM-graded"),
+            }
+        except (json.JSONDecodeError, KeyError):
+            # If LLM didn't return proper JSON, extract score manually
+            content = response.choices[0].message.content
+            return {
+                "score": None,
+                "notes": f"Grading response: {content[:100]}",
+            }
+    
+    except Exception as e:
+        return {
+            "score": None,
+            "notes": f"Error in LLM grading: {str(e)[:80]}",
+        }
 
 
 def score_context_recall(
@@ -197,11 +320,71 @@ def score_completeness(
         "Compare the model answer with the expected answer.
          Rate completeness 1-5. Are all key points covered?
          Output: {'score': int, 'missing_points': [str]}"
+    Sprint 4 Implementation — LLM-as-Judge
     """
-    return {
-        "score": None,
-        "notes": "TODO: Implement score_completeness (so sánh với expected_answer)",
-    }
+    try:
+        from openai import OpenAI
+        import os
+        
+        api_key = os.getenv("OPENAI_API_KEY")
+        if not api_key:
+            return {
+                "score": None,
+                "notes": "OPENAI_API_KEY not configured",
+            }
+        
+        client = OpenAI(api_key=api_key)
+        
+        grading_prompt = f"""
+You are an evaluator for a question-answering system.
+Compare the model's answer with the expected reference answer.
+Assess how complete the model's answer is.
+
+Question: {query}
+
+Expected Answer (Reference):
+{expected_answer}
+
+Model's Answer:
+{answer}
+
+Rate completeness on a scale of 1-5:
+5 = Answer covers all key points from the expected answer
+4 = Answer is largely complete, missing only 1 minor detail
+3 = Answer covers most points but misses some information
+2 = Answer is missing several important pieces of information
+1 = Answer is missing most of the key information
+
+Respond ONLY with a JSON object in this format:
+{{"score": <integer 1-5>, "reason": "<brief explanation>"}}
+"""
+        
+        response = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[{"role": "user", "content": grading_prompt}],
+            temperature=0,
+            max_tokens=200,
+        )
+        
+        import json
+        try:
+            result = json.loads(response.choices[0].message.content)
+            return {
+                "score": result.get("score"),
+                "notes": result.get("reason", "LLM-graded for completeness"),
+            }
+        except (json.JSONDecodeError, KeyError):
+            content = response.choices[0].message.content
+            return {
+                "score": None,
+                "notes": f"Grading response: {content[:100]}",
+            }
+    
+    except Exception as e:
+        return {
+            "score": None,
+            "notes": f"Error in LLM grading: {str(e)[:80]}",
+        }
 
 
 # =============================================================================
@@ -487,24 +670,30 @@ if __name__ == "__main__":
         baseline_results = []
 
     # --- Chạy Variant (sau khi Sprint 3 hoàn thành) ---
-    # TODO Sprint 4: Uncomment sau khi implement variant trong rag_answer.py
-    # print("\n--- Chạy Variant ---")
-    # variant_results = run_scorecard(
-    #     config=VARIANT_CONFIG,
-    #     test_questions=test_questions,
-    #     verbose=True,
-    # )
-    # variant_md = generate_scorecard_summary(variant_results, VARIANT_CONFIG["label"])
-    # (RESULTS_DIR / "scorecard_variant.md").write_text(variant_md, encoding="utf-8")
+    print("\n--- Chạy Variant (Hybrid without Rerank) ---")
+    variant_results = []
+    try:
+        variant_results = run_scorecard(
+            config=VARIANT_CONFIG,
+            test_questions=test_questions,
+            verbose=True,
+        )
+        variant_md = generate_scorecard_summary(variant_results, VARIANT_CONFIG["label"])
+        variant_path = RESULTS_DIR / "scorecard_variant.md"
+        variant_path.write_text(variant_md, encoding="utf-8")
+        print(f"\nVariant scorecard lưu tại: {variant_path}")
+    except Exception as e:
+        print(f"Lỗi khi chạy variant: {e}")
+        variant_results = []
 
     # --- A/B Comparison ---
-    # TODO Sprint 4: Uncomment sau khi có cả baseline và variant
-    # if baseline_results and variant_results:
-    #     compare_ab(
-    #         baseline_results,
-    #         variant_results,
-    #         output_csv="ab_comparison.csv"
-    #     )
+    if baseline_results and variant_results:
+        print("\n--- A/B Comparison: Baseline vs Variant ---")
+        compare_ab(
+            baseline_results,
+            variant_results,
+            output_csv="ab_comparison.csv"
+        )
 
     print("\n\nViệc cần làm Sprint 4:")
     print("  1. Hoàn thành Sprint 2 + 3 trước")
