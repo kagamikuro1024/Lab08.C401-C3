@@ -486,7 +486,10 @@ def call_llm(prompt: str) -> str:
             max_tokens=512,
         )
         
-        return response.choices[0].message.content
+        content = response.choices[0].message.content
+        if content is None:
+            raise ValueError("LLM returned empty response")
+        return content
     
     except Exception as e:
         print(f"Lỗi trong call_llm: {e}")
