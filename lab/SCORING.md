@@ -40,9 +40,9 @@ repo/
 │   └── test_questions.json           # Bắt buộc
 ├── logs/
 │   └── grading_run.json              # Bắt buộc — log chạy grading_questions
-├── results/
+├─ ─ results/
 │   ├── scorecard_baseline.md         # Bắt buộc
-│   └── scorecard_variant.md          # Bắt buộc
+│   └── scorecard_variant.md         # Bắt buộc
 ├── docs/
 │   ├── architecture.md               # Bắt buộc
 │   └── tuning-log.md                 # Bắt buộc

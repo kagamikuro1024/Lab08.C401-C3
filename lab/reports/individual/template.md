@@ -61,7 +61,7 @@ _________________
 > "Tôi sẽ thử X vì kết quả eval cho thấy Y."
 
 _________________
-
+ 
 ---
 
 *Lưu file này với tên: `reports/individual/[ten_ban].md`*
