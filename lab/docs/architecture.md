@@ -1,26 +1,32 @@
-# Kiến Trúc RAG Pipeline — Phiên Bản Tối Ưu (v2)
+# Architecture — RAG Pipeline (Day 08 Lab)
 
-Tài liệu này mô tả thiết kế hệ thống RAG cuối cùng sau khi đã tối ưu hóa thông qua 4 đợt Sprint.
-
----
-
-## 1. Tổng Quan Hệ Thống
-Hệ thống sử dụng kiến trúc tìm kiếm đa tầng (Multi-stage Retrieval) để đảm bảo độ chính xác tối đa cho cả ngữ nghĩa chính sách và các từ khóa đặc thù (mã lỗi, SLA, cấp độ truy cập).
-
-- **Sinh văn bản**: OpenAI `gpt-4o-mini`
-- **Đánh giá**: LLM-as-Judge (`gpt-4-turbo`)
+Tài liệu này mô tả kiến trúc cuối cùng của nhóm sau khi hoàn tất Sprint 1-4. Hệ thống phục vụ câu hỏi nội bộ cho CS + IT Helpdesk, ưu tiên trả lời có dẫn chứng, hạn chế hallucination, và có cơ chế abstain khi tài liệu không đủ dữ liệu.
 
 ---
 
-## 2. Quy Trình Thu Thập Dữ Liệu (Indexing)
-- **Tài liệu**: 5 bộ chính sách công ty (IT, HR, Sales, Support).
-- **Chunking**: Section-based kết hợp Paragraph overlap.
-  - `CHUNK_SIZE`: 400 tokens.
-  - `CHUNK_OVERLAP`: 80 tokens.
-- **Embedding**: OpenAI `text-embedding-3-small`.
-- **Lưu trữ**: ChromaDB (Vector Store).
+## 1. Tổng quan kiến trúc
 
-**Tài liệu được index:**
+```text
+[Raw Docs in data/docs]
+    ↓
+[index.py: preprocess_document -> chunk_document -> get_embedding -> build_index]
+    ↓
+[ChromaDB Persistent Vector Store]
+    ↓
+[rag_answer.py: retrieve_dense / retrieve_sparse / retrieve_hybrid -> rerank optional -> build_context_block -> build_grounded_prompt -> call_llm]
+    ↓
+[Answer + Sources + Chunks Used + Config]
+    ↓
+[eval.py: scorecard + A/B comparison + grading_run.json]
+```
+
+Hệ thống được thiết kế để trả lời các câu như SLA ticket P1, hoàn tiền, và cấp quyền truy cập nội bộ. Điểm quan trọng nhất là mỗi câu trả lời phải bám vào chunk đã retrieve và có citation rõ ràng, thay vì dựa trên kiến thức chung của model.
+
+---
+
+## 2. Indexing Pipeline (Sprint 1)
+
+### Tài liệu được index
 
 | File | Nguồn | Department | Số chunk |
 |------|-------|-----------|---------|
@@ -30,119 +36,165 @@ Hệ thống sử dụng kiến trúc tìm kiếm đa tầng (Multi-stage Retrie
 | `it_helpdesk_faq.txt` | `support/helpdesk-faq.md` | IT | 6 |
 | `hr_leave_policy.txt` | `hr/leave-policy-2026.pdf` | HR | 5 |
 
-**Tổng số chunks: 29**
+Tổng số chunks sau indexing là **29**.
 
-**Quyết định chunking:**
+### Quyết định chunking
 
 | Tham số | Giá trị | Lý do |
 |---------|---------|-------|
-| Chunk size | 400 tokens (ước lượng) | Giữ đủ ngữ cảnh điều khoản, tránh chunk quá dài |
-| Overlap | 80 tokens (ước lượng) | Giảm rủi ro mất ngữ nghĩa ở biên chunk |
-| Chunking strategy | Section-based + paragraph-aware | Bám heading tự nhiên của tài liệu |
-| Metadata fields | source, section, effective_date, department, access | Phục vụ traceability, freshness, citation |
+| Chunk size | 400 tokens ước lượng | Đủ giữ ngữ cảnh điều khoản nhưng không quá dài để làm loãng retrieval |
+| Overlap | 80 tokens ước lượng | Giảm nguy cơ cắt giữa câu và giữ continuity giữa các đoạn liền kề |
+| Chunking strategy | Section-based + paragraph-aware | Bám theo heading tự nhiên của tài liệu và tránh tách rời điều khoản |
+| Metadata fields | source, section, effective_date, department, access | Phục vụ truy vết, freshness, lọc theo phòng ban và citation |
 
-**Kết quả kiểm tra Sprint 1:**
-- ✓ `python index.py` chạy thành công và tạo index ChromaDB.
-- ✓ `list_chunks()` cho thấy chunk không bị cắt vỡ điều khoản chính.
-- ✓ `inspect_metadata_coverage()` cho thấy **0 chunk thiếu `effective_date`**.
+### Kết quả kiểm tra Sprint 1
 
----
+- `python index.py` chạy thành công và tạo index ChromaDB.
+- `list_chunks()` hiển thị chunk hợp lý, không cắt giữa điều khoản lớn.
+- `inspect_metadata_coverage()` cho thấy **0 chunks thiếu `effective_date`**.
+- Phân bố metadata sau indexing: CS 6 chunks, HR 5 chunks, IT 11 chunks, IT Security 7 chunks.
 
-## 3. Kiến Trúc Tìm Kiếm (Retrieval & Reranking)
-Hệ thống sử dụng quy trình 3 giai đoạn để lọc context chất lượng nhất:
+### Embedding model
 
-### Giai đoạn 1: Tìm kiếm song song (Parallel Retrieval)
-- **Dense Search**: Sử dụng Vector Similarity để tìm kiếm theo ý nghĩa ngữ nghĩa.
-- **Sparse Search (BM25)**: Tìm kiếm theo từ khóa chính xác. 
-  - *Cải tiến*: Áp dụng **Aggressive Stopword Filtering** để loại bỏ nhiễu từ các từ thông dụng tiếng Việt.
-
-### Giai đoạn 2: Hợp nhất kết quả (Fusion)
-- Sử dụng thuật toán **Reciprocal Rank Fusion (RRF)** để kết hợp danh sách kết quả từ Dense và Sparse.
-- Trọng số tối ưu: `Dense (0.7)` / `Sparse (0.3)`.
-
-### Giai đoạn 3: Tuyên lọc (Cross-Encoder Reranking) — *Mới*
-- Sử dụng mô hình **Cross-Encoder** (`ms-marco-MiniLM-L-6-v2`) để chấm điểm lại mức độ liên quan giữa Câu hỏi và Top-10 Chunks.
-- Chức năng: Loại bỏ hoàn toàn các "kết quả rác" mà BM25 có thể mang lại do trùng lặp từ khóa ngẫu nhiên.
+- **Model**: OpenAI `text-embedding-3-small`
+- **Vector store**: ChromaDB (`PersistentClient`)
+- **Similarity metric**: cosine
 
 ---
 
-## 4. Kết Quả Đánh Giá
-Hệ thống Hybrid + Reranking đã vượt qua Baseline sau khi được tối ưu hóa.
-
-| Chỉ số | Baseline (Dense) | Hybrid + Rerank | Kết quả |
-| :--- | :--- | :--- | :--- |
-| **Độ Trung Thực** | 4.5/5 | 4.4/5 | Duy trì ổn định |
-| **Độ Liên Quan** | 4.5/5 | **4.6/5** | **📈 Cải thiện (+2%)** |
-| **Context Recall** | 1.0/1 | 1.0/1 | TIE (Hoàn hảo) |
-| **Độ Hoàn Chỉnh** | 0.70/1 | **0.72/1** | **📈 Cải thiện (+2%)** |
-| **Tổng Trung Bình** | **0.875** | **0.880** | **🏆 VƯỢT TRỘI** |
-
----
-
-## 5. Cấu Hình Khuyên Dùng cho Sản Phẩm
-Dựa trên các thử nghiệm, đây là cấu hình mang lại chất lượng câu trả lời tốt nhất:
-
-```python
-# Cấu hình tìm kiếm
-RETRIEVAL_MODE = "hybrid"
-DENSE_WEIGHT = 0.7
-SPARSE_WEIGHT = 0.3
-USE_RERANK = True  # Sử dụng Cross-Encoder
-
-# Cấu hình Sinh văn bản
-LLM_MODEL = "gpt-4o-mini"
-TEMPERATURE = 0.0  # Đảm bảo tính trung thực (Grounding)
-```
-
----
-
-## 6. Sơ Đồ Kiến Trúc Luồng
-```
-User Query ──► [Tokenizer + Stopword Removal] 
-                     │
-                     ├─► Dense Search (Vector Store) ──┐
-                     │                                 ▼
-                     └─► Sparse Search (BM25 Index) ──► [RRF Fusion]
-                                                       │
-                                                       ▼
-[Top-3 Selected] ◄── [Cross-Encoder Reranking] ◄── [Top-10 Candidates]
-       │
-       ▼
- [GPT-4o-Mini] ───► Final Answer (với trích dẫn nguồn [1][2])
-```
-
-**Cập Nhật Lần Cuối**: 13/04/2026  
-**Trạng Thái**: Đã tối ưu hóa và kiểm chứng qua Sprint 4.
-
----
-
-## 7. Phần Cấu Hình Chi Tiết Baseline vs Variant
+## 3. Retrieval Pipeline (Sprint 2 + 3)
 
 ### Baseline (Sprint 2)
 
 | Tham số | Giá trị |
 |---------|---------|
-| Strategy | Dense (embedding similarity) |
+| Strategy | Dense retrieval bằng embedding similarity |
 | Top-k search | 10 |
 | Top-k select | 3 |
 | Rerank | Không |
 
-### Variant cuối cùng (Sprint 4)
+### Variant cuối cùng (Sprint 3)
 
 | Tham số | Giá trị | Thay đổi so với baseline |
 |---------|---------|------------------------|
-| Strategy | Hybrid + rerank | Dense + sparse tăng recall, rerank lọc nhiễu |
+| Strategy | Hybrid retrieval + rerank | Kết hợp dense + sparse để tăng recall cho cả câu tự nhiên lẫn keyword, sau đó lọc nhiễu bằng reranker |
 | Top-k search | 10 | Giữ nguyên để A/B công bằng |
-| Top-k select | 3 | Giữ nguyên để context ổn định |
-| Rerank | Có (Cross-Encoder) | Loại chunk rác từ BM25 |
-| Query transform | Không | Không đổi |
+| Top-k select | 3 | Giữ nguyên để context vào LLM không đổi |
+| Rerank | Có | Dùng Cross-Encoder để loại chunk rác |
+| Query transform | Không áp dụng | Không đổi |
 
-### Lý do chọn variant
+### Lý do chọn variant này
 
-Corpus có cả ngôn ngữ tự nhiên và từ khóa đặc thù. Dense baseline tốt cho semantic search nhưng dễ hụt alias/keyword; hybrid khắc phục recall. Sau khi thêm rerank, pipeline giữ được chunk liên quan tốt hơn ở câu keyword/OOD.
+Nhóm chọn **hybrid retrieval** vì corpus có hai kiểu truy vấn khác nhau:
+- câu tự nhiên như “Khách hàng có thể yêu cầu hoàn tiền trong bao nhiêu ngày?”
+- câu có keyword/mã đặc thù như “SLA ticket P1”, “Level 3”, “ERR-403”
+
+Dense retrieval tốt với ngữ nghĩa, nhưng dễ bỏ lỡ keyword chính xác. Hybrid giúp bổ sung sparse/BM25 để tăng khả năng kéo đúng chunk khi truy vấn chứa từ khóa đặc thù hoặc tên mục điều khoản.
+
+### Quan sát từ Sprint 3 và Sprint 4
+
+Sprint 3 cho thấy hybrid bản đầu còn nhiễu, đặc biệt với câu OOD như `ERR-403`. Dense + sparse giúp tăng recall nhưng BM25 kéo nhiều chunk rác.
+
+Sprint 4 thêm stopword filtering, rerank, và sửa evaluation context để kết quả ổn định hơn. Đây là lúc variant chuyển từ “đúng hướng nhưng còn nhiễu” sang “đủ sạch để nộp”.
+
+Các test so sánh cho thấy hybrid cải thiện khả năng kéo đúng source trong các query có keyword rõ, ví dụ:
+- `SLA P1 xử lý bao lâu?` -> hybrid giữ đúng `support/sla-p1-2026.pdf`
+- `ERR-403` -> rerank giúp loại chunk nhiễu và an toàn hơn khi abstain
+
+### Diễn tiến tối ưu hóa
+
+1. Sprint 2 baseline: dense retrieval ổn định nhưng bỏ lỡ keyword/alias ở vài câu.
+2. Sprint 3 hybrid lần 1: recall tăng nhưng nhiễu tăng, nhất là với OOD/keyword mơ hồ.
+3. Sprint 4 final: thêm stopword filtering và Cross-Encoder rerank để loại chunk rác; đồng thời sửa eval context để đánh giá phản ánh đúng chất lượng.
+
+> Ghi chú: compare chính thức trong báo cáo dùng variant đã ổn định ở Sprint 4. Biến chính được ghi nhận là retrieval mode; stopword/rerank là phần tối ưu trong cùng nhánh variant.
+
+---
+
+## 4. Generation (Sprint 2)
+
+### Grounded Prompt Template
+
+```text
+Answer only from the retrieved context below.
+If the context is insufficient to answer the question, say you do not know and do not make up information.
+Cite the source field (in brackets like [1]) when possible.
+Keep your answer short, clear, and factual.
+Respond in the same language as the question.
+
+Question: {query}
+
+Context:
+[1] {source} | {section} | score={score}
+{chunk_text}
+
+Answer:
+```
+
+### LLM Configuration
+
+| Tham số | Giá trị |
+|---------|---------|
+| Model | `gpt-4o-mini` |
+| Temperature | 0 |
+| Max tokens | 512 |
+
+### Hành vi mong đợi
+
+- Trả lời ngắn, có citation `[1]` nếu có đủ context.
+- Nếu không đủ bằng chứng, abstain rõ ràng thay vì bịa.
+- Giữ ngôn ngữ theo ngôn ngữ của câu hỏi.
+
+---
+
+## 5. Evaluation Path (Sprint 4)
+
+### Chất lượng đo bằng gì
+
+- Faithfulness: câu trả lời có bám vào context không.
+- Answer Relevance: trả lời đúng trọng tâm câu hỏi không.
+- Context Recall: source đúng có được retrieve không.
+- Completeness: câu trả lời có đủ ý quan trọng không.
+
+### File đầu ra của evaluation
+
+- `results/scorecard_baseline.md`
+- `results/scorecard_variant.md`
+- `logs/grading_run.json`
+
+---
+
+## 6. Failure Mode Checklist
+
+| Failure Mode | Triệu chứng | Cách kiểm tra |
+|-------------|-------------|---------------|
+| Index lỗi | Source sai version hoặc thiếu metadata | `inspect_metadata_coverage()` |
+| Chunking tệ | Cắt giữa điều khoản hoặc thiếu ngữ cảnh | `list_chunks()` |
+| Retrieval lỗi | Không kéo đúng expected source | `score_context_recall()` và so sánh top chunks |
+| Generation lỗi | Câu trả lời không grounded / hallucination | Prompt + `score_faithfulness()` |
+| Context overload | Context quá dài, answer loãng | Giữ `top_k_select = 3` |
+
+---
+
+## 7. Diagram
+
+```mermaid
+graph LR
+    A[User Query] --> B[Query Embedding / Keyword Tokenization]
+    B --> C[Dense Retrieval]
+    B --> D[Sparse Retrieval - BM25]
+    C --> E[RRF Fusion]
+    D --> E
+    E --> F[Top-3 Select]
+    F --> G[Build Context Block]
+    G --> H[Grounded Prompt]
+    H --> I[LLM]
+    I --> J[Answer + Citation + Sources]
+    J --> K[Eval / Scorecard / Log]
+```
 
 ---
 
 ## 8. Kết luận thiết kế
 
-Thiết kế cuối cùng giữ triết lý đơn giản nhưng có bằng chứng. Dense baseline là nền, hybrid + rerank là bản nộp tối ưu vì cải thiện Answer Relevance/Completeness và giữ Context Recall tối đa.
+Kiến trúc cuối cùng ưu tiên sự đơn giản và khả năng chứng minh bằng số liệu. Dense baseline làm nền, hybrid variant tăng khả năng bắt keyword và cải thiện Answer Relevance/Completeness trong compare thực nghiệm, trong khi vẫn giữ Context Recall ở mức tối đa.
