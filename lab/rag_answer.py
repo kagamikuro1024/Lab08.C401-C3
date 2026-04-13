@@ -108,10 +108,40 @@ _bm25_index = None
 _bm25_chunks = None
 
 
+def _simple_tokenize(text: str) -> List[str]:
+    """
+    Simple but effective Vietnamese tokenization with stopword filtering.
+    """
+    import re
+    
+    # Danh sách stop words tiếng Việt mở rộng (Aggressive stop words for IT context)
+    VI_STOPWORDS = {
+        "là", "gì", "và", "của", "cho", "trong", "được", "người", "việc", "khi",
+        "tại", "với", "các", "những", "một", "có", "này", "đó", "về", "lại",
+        "ra", "nào", "lên", "vào", "như", "đã", "đang", "cũng", "vì", "nên",
+        "mà", "thì", "nếu", "hay", "cách", "xử", "lý", "theo", "tới", "từ",
+        "lỗi", "bị", "để", "sau", "tất", "cả", "mọi", "hơn", "vẫn", "đang",
+        "cần", "phải", "nói", "biết", "làm", "đưa", "với", "cho", "theo", "tới"
+    }
+
+    text = text.lower()
+    # Keep alphanumeric, keep "-" and "_" (for error codes, etc)
+    tokens = re.findall(r'\w[\w\-]*', text)
+    
+    # Filter stopwords but keep tokens that look like error codes (containing numbers or "-")
+    filtered_tokens = [
+        t for t in tokens 
+        if t not in VI_STOPWORDS or any(char.isdigit() or char == '-' for char in t)
+    ]
+    
+    return filtered_tokens if filtered_tokens else tokens
+
+
 def _build_bm25_index() -> Tuple:
     """
     Build BM25 index từ tất cả chunks trong ChromaDB.
     Cache globally để không rebuild mỗi lần.
+    improved tokenization để avoid noise retrieval.
     """
     global _bm25_index, _bm25_chunks
     
@@ -141,9 +171,9 @@ def _build_bm25_index() -> Tuple:
             "metadata": meta,
         })
     
-    # Build BM25 index
+    # Build BM25 index with improved tokenization
     corpus = [chunk["text"] for chunk in chunks]
-    tokenized_corpus = [doc.lower().split() for doc in corpus]
+    tokenized_corpus = [_simple_tokenize(doc) for doc in corpus]
     bm25 = BM25Okapi(tokenized_corpus)
     
     _bm25_index = bm25
@@ -152,12 +182,17 @@ def _build_bm25_index() -> Tuple:
     return bm25, chunks
 
 
-def retrieve_sparse(query: str, top_k: int = TOP_K_SEARCH) -> List[Dict[str, Any]]:
+def retrieve_sparse(query: str, top_k: int = TOP_K_SEARCH, min_score: float = 0.1) -> List[Dict[str, Any]]:
     """
     Sparse retrieval: tìm kiếm theo keyword (BM25).
 
     Mạnh ở: exact term, mã lỗi, tên riêng (ví dụ: "ERR-403", "P1", "refund")
     Hay hụt: câu hỏi paraphrase, đồng nghĩa
+    
+    Improved: 
+    - Uses proper Vietnamese tokenization (not simple split())
+    - Filters by min_score to avoid noise retrieval
+    - Fixes Q9 case: "ERR-403-AUTH" no longer matches "error" from unrelated FAQ
     """
     try:
         bm25, chunks = _build_bm25_index()
@@ -165,18 +200,20 @@ def retrieve_sparse(query: str, top_k: int = TOP_K_SEARCH) -> List[Dict[str, Any
         print(f"Lỗi build BM25: {e}")
         return []
     
-    # Tokenize query
-    tokenized_query = query.lower().split()
+    # Tokenize query with improved tokenization
+    tokenized_query = _simple_tokenize(query)
     
     # Get BM25 scores
     scores = bm25.get_scores(tokenized_query)
     
-    # Get top-k indices
-    top_indices = sorted(
-        range(len(scores)),
-        key=lambda i: scores[i],
-        reverse=True
-    )[:top_k]
+    # Get top-k indices AFTER filtering by min_score threshold
+    # FIX: This prevents noise retrieval for OOD queries
+    scored_indices = [
+        (i, scores[i]) for i in range(len(scores))
+        if scores[i] >= min_score
+    ]
+    scored_indices.sort(key=lambda x: x[1], reverse=True)
+    top_indices = [idx for idx, _ in scored_indices[:top_k]]
     
     # Build result
     results = []
@@ -197,8 +234,8 @@ def retrieve_sparse(query: str, top_k: int = TOP_K_SEARCH) -> List[Dict[str, Any
 def retrieve_hybrid(
     query: str,
     top_k: int = TOP_K_SEARCH,
-    dense_weight: float = 0.6,
-    sparse_weight: float = 0.4,
+    dense_weight: float = 0.7,
+    sparse_weight: float = 0.3,
 ) -> List[Dict[str, Any]]:
     """
     Hybrid retrieval: kết hợp dense và sparse bằng Reciprocal Rank Fusion (RRF).
@@ -217,14 +254,14 @@ def retrieve_hybrid(
     # Build lookup maps từ dense results
     dense_scores = {}
     for i, result in enumerate(dense_results):
-        # Dùng text as key (vì metadata có thể khác nhau)
-        key = result["text"][:50]  # First 50 chars as key
+        # Dùng full text as key để tránh collision
+        key = result["text"]
         dense_scores[key] = (i, result["score"])
     
     # Build lookup maps từ sparse results
     sparse_scores = {}
     for i, result in enumerate(sparse_results):
-        key = result["text"][:50]
+        key = result["text"]
         sparse_scores[key] = (i, result["score"])
     
     # Merge và apply RRF
@@ -232,7 +269,7 @@ def retrieve_hybrid(
     
     # Add dense results
     for result in dense_results:
-        key = result["text"][:50]
+        key = result["text"]
         if key not in merged:
             merged[key] = {"dense_rank": None, "sparse_rank": None, "result": result}
         dense_rank, score = dense_scores[key]
@@ -241,7 +278,7 @@ def retrieve_hybrid(
     
     # Add sparse results
     for result in sparse_results:
-        key = result["text"][:50]
+        key = result["text"]
         if key not in merged:
             merged[key] = {"dense_rank": None, "sparse_rank": None, "result": result}
         sparse_rank, score = sparse_scores[key]
@@ -256,9 +293,9 @@ def retrieve_hybrid(
         sparse_rank = info.get("sparse_rank")
         
         if dense_rank is None:
-            dense_rank = len(dense_results)
+            dense_rank = 100  # Default rank cho item không nằm trong top-K dense
         if sparse_rank is None:
-            sparse_rank = len(sparse_results)
+            sparse_rank = 100  # Default rank cho item không nằm trong top-K sparse
         
         rrf_score = (
             dense_weight * (1.0 / (60 + dense_rank)) +
@@ -283,6 +320,9 @@ def retrieve_hybrid(
 # Cross-encoder để chấm lại relevance sau search rộng
 # =============================================================================
 
+# Global Reranker (cached)
+_reranker_model = None
+
 def rerank(
     query: str,
     candidates: List[Dict[str, Any]],
@@ -290,32 +330,39 @@ def rerank(
 ) -> List[Dict[str, Any]]:
     """
     Rerank các candidate chunks bằng cross-encoder.
-
-    Cross-encoder: chấm lại "chunk nào thực sự trả lời câu hỏi này?"
-    MMR (Maximal Marginal Relevance): giữ relevance nhưng giảm trùng lặp
-
-    Funnel logic (từ slide):
-      Search rộng (top-20) → Rerank (top-6) → Select (top-3)
-
-    TODO Sprint 3 (nếu chọn rerank):
-    Option A — Cross-encoder:
-        from sentence_transformers import CrossEncoder
-        model = CrossEncoder("cross-encoder/ms-marco-MiniLM-L-6-v2")
-        pairs = [[query, chunk["text"]] for chunk in candidates]
-        scores = model.predict(pairs)
-        ranked = sorted(zip(candidates, scores), key=lambda x: x[1], reverse=True)
-        return [chunk for chunk, _ in ranked[:top_k]]
-
-    Option B — Rerank bằng LLM (đơn giản hơn nhưng tốn token):
-        Gửi list chunks cho LLM, yêu cầu chọn top_k relevant nhất
-
-    Khi nào dùng rerank:
-    - Dense/hybrid trả về nhiều chunk nhưng có noise
-    - Muốn chắc chắn chỉ 3-5 chunk tốt nhất vào prompt
+    Giúp loại bỏ noise từ BM25/Sparse retrieval cho các query OOD.
     """
-    # TODO Sprint 3: Implement rerank
-    # Tạm thời trả về top_k đầu tiên (không rerank)
-    return candidates[:top_k]
+    global _reranker_model
+    
+    if not candidates:
+        return []
+        
+    try:
+        from sentence_transformers import CrossEncoder
+    except ImportError:
+        print("Cần cài: pip install sentence-transformers")
+        return candidates[:top_k]
+
+    if _reranker_model is None:
+        # MiniLM-L-6-v2 là sweet spot: nhanh và hiệu quả
+        _reranker_model = CrossEncoder("cross-encoder/ms-marco-MiniLM-L-6-v2")
+
+    # Build pairs
+    pairs = [[query, chunk["text"]] for chunk in candidates]
+    
+    # Predict relevance scores
+    scores = _reranker_model.predict(pairs)
+    
+    # Combine and sort
+    ranked = sorted(zip(candidates, scores), key=lambda x: x[1], reverse=True)
+    
+    # Cập nhật score của chunk bằng rerank score
+    results = []
+    for chunk, score in ranked[:top_k]:
+        chunk["rerank_score"] = float(score)
+        results.append(chunk)
+
+    return results
 
 
 # =============================================================================
