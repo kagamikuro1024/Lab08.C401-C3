@@ -125,10 +125,63 @@ def retrieve_sparse(query: str, top_k: int = TOP_K_SEARCH) -> List[Dict[str, Any
         scores = bm25.get_scores(tokenized_query)
         top_indices = sorted(range(len(scores)), key=lambda i: scores[i], reverse=True)[:top_k]
     """
-    # TODO Sprint 3: Implement BM25 search
-    # Tạm thời return empty list
-    print("[retrieve_sparse] Chưa implement — Sprint 3")
-    return []
+    try:
+        import chromadb
+        from rank_bm25 import BM25Okapi
+        from index import CHROMA_DB_DIR
+    except ImportError as e:
+        raise ImportError(f"Cần import: {e}")
+
+    try:
+        # Bước 1: Load tất cả chunks từ ChromaDB
+        client = chromadb.PersistentClient(path=str(CHROMA_DB_DIR))
+        collection = client.get_collection("rag_lab")
+        
+        # Query tất cả chunks
+        results = collection.get(
+            limit=10000,  # Lấy tối đa 10000 chunks (phòng trường hợp corpus lớn)
+            include=["documents", "metadatas"]
+        )
+        
+        if not results["documents"]:
+            return []
+        
+        # Bước 2: Tạo corpus và tokenize
+        corpus = results["documents"]
+        metadatas = results["metadatas"]
+        
+        # Tokenize corpus: lowercase và split
+        tokenized_corpus = [doc.lower().split() for doc in corpus]
+        
+        # Bước 3: Tạo BM25 index
+        bm25 = BM25Okapi(tokenized_corpus)
+        
+        # Bước 4: Score query
+        tokenized_query = query.lower().split()
+        scores = bm25.get_scores(tokenized_query)
+        
+        # Bước 5: Lấy top_k indices
+        top_indices = sorted(
+            range(len(scores)),
+            key=lambda i: scores[i],
+            reverse=True
+        )[:top_k]
+        
+        # Bước 6: Build result list trong format tương tự retrieve_dense
+        chunks = []
+        for idx in top_indices:
+            if idx < len(corpus):
+                chunks.append({
+                    "text": corpus[idx],
+                    "metadata": metadatas[idx],
+                    "score": scores[idx],
+                })
+        
+        return chunks
+    
+    except Exception as e:
+        print(f"Lỗi trong retrieve_sparse: {e}")
+        return []
 
 
 # =============================================================================
@@ -164,10 +217,67 @@ def retrieve_hybrid(
     - Corpus có cả câu tự nhiên VÀ tên riêng, mã lỗi, điều khoản
     - Query như "Approval Matrix" khi doc đổi tên thành "Access Control SOP"
     """
-    # TODO Sprint 3: Implement hybrid RRF
-    # Tạm thời fallback về dense
-    print("[retrieve_hybrid] Chưa implement RRF — fallback về dense")
-    return retrieve_dense(query, top_k)
+    # Bước 1: Lấy kết quả từ dense
+    dense_results = retrieve_dense(query, top_k=top_k)
+    
+    # Bước 2: Lấy kết quả từ sparse
+    sparse_results = retrieve_sparse(query, top_k=top_k)
+    
+    if not dense_results and not sparse_results:
+        return []
+    
+    # Bước 3: Tạo mapping từ chunk text tới rank (cho mỗi strategy)
+    dense_rank_map = {}
+    for rank, result in enumerate(dense_results):
+        text_key = result["text"]
+        dense_rank_map[text_key] = rank
+    
+    sparse_rank_map = {}
+    for rank, result in enumerate(sparse_results):
+        text_key = result["text"]
+        sparse_rank_map[text_key] = rank
+    
+    # Bước 4: Tích hợp kết quả bằng RRF
+    # RRF formula: score = weight * (1 / (k + rank))
+    # k=60 là hằng số tiêu chuẩn trong RRF
+    RRF_K = 60
+    rrf_scores = {}
+    all_chunks = {}  # Map text_key → chunk data
+    
+    for result in dense_results:
+        text_key = result["text"]
+        rank = dense_rank_map[text_key]
+        rrf_scores[text_key] = dense_weight * (1.0 / (RRF_K + rank))
+        all_chunks[text_key] = result
+    
+    for result in sparse_results:
+        text_key = result["text"]
+        rank = sparse_rank_map[text_key]
+        rrf_score = sparse_weight * (1.0 / (RRF_K + rank))
+        
+        if text_key in rrf_scores:
+            # Chunk xuất hiện ở cả hai → cộng score
+            rrf_scores[text_key] += rrf_score
+        else:
+            # Chunk chỉ xuất hiện ở sparse
+            rrf_scores[text_key] = rrf_score
+            all_chunks[text_key] = result
+    
+    # Bước 5: Sort theo RRF score giảm dần
+    sorted_chunks = sorted(
+        all_chunks.items(),
+        key=lambda x: rrf_scores[x[0]],
+        reverse=True
+    )[:top_k]
+    
+    # Bước 6: Build result list với RRF score
+    result_list = []
+    for text_key, chunk in sorted_chunks:
+        chunk_copy = chunk.copy()
+        chunk_copy["score"] = rrf_scores[text_key]  # Ghi đè score bằng RRF score
+        result_list.append(chunk_copy)
+    
+    return result_list
 
 
 # =============================================================================
@@ -453,7 +563,7 @@ def compare_retrieval_strategies(query: str) -> None:
     print(f"Query: {query}")
     print('='*60)
 
-    strategies = ["dense", "hybrid"]  # Thêm "sparse" sau khi implement
+    strategies = ["dense", "sparse", "hybrid"]
 
     for strategy in strategies:
         print(f"\n--- Strategy: {strategy} ---")
