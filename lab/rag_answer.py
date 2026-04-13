@@ -278,30 +278,29 @@ def build_context_block(chunks: List[Dict[str, Any]]) -> str:
 
 def build_grounded_prompt(query: str, context_block: str) -> str:
     """
-    Xây dựng grounded prompt theo 4 quy tắc từ slide:
-    1. Evidence-only: Chỉ trả lời từ retrieved context
-    2. Abstain: Thiếu context thì nói không đủ dữ liệu
-    3. Citation: Gắn source/section khi có thể
-    4. Short, clear, stable: Output ngắn, rõ, nhất quán
+    Xây dựng prompt ép LLM trả lời từ context, không bịa.
 
-    TODO Sprint 2:
-    Đây là prompt baseline. Trong Sprint 3, bạn có thể:
-    - Thêm hướng dẫn về format output (JSON, bullet points)
-    - Thêm ngôn ngữ phản hồi (tiếng Việt vs tiếng Anh)
-    - Điều chỉnh tone phù hợp với use case (CS helpdesk, IT support)
+    Key rules:
+    1. "Answer ONLY from context" — ép LLM không dùng background knowledge
+    2. "If insufficient, say 'Không đủ dữ liệu.'" — abstain, không bịa
+    3. Cite sources [1], [2] — format rõ ràng
+    4. Keep short — tránh LLM dài dòng, "lost in the middle"
     """
-    prompt = f"""Answer only from the retrieved context below.
-If the context is insufficient to answer the question, say you do not know and do not make up information.
-Cite the source field (in brackets like [1]) when possible.
-Keep your answer short, clear, and factual.
-Respond in the same language as the question.
+    prompt = f"""You are a helpful company assistant that answers questions based ONLY on provided context.
 
-Question: {query}
+**CRITICAL RULES:**
+1. Answer ONLY using information from the Context below.
+2. Do NOT use your general knowledge or make assumptions.
+3. If the Context does NOT contain enough information to answer, respond with exactly: "Không đủ dữ liệu."
+4. When using information from Context, cite the source using format [1], [2], etc.
+5. Keep your answer concise (1-3 sentences), clear, and factual.
 
-Context:
+**Question:** {query}
+
+**Context:**
 {context_block}
 
-Answer:"""
+**Answer:**"""
     return prompt
 
 
@@ -318,24 +317,29 @@ def call_llm(prompt: str) -> str:
             "Hoặc: pip install -r requirements.txt"
         )
     
-    try:
-        api_key = os.getenv("OPENAI_API_KEY")
-        if not api_key:
-            raise ValueError("OPENAI_API_KEY không tìm thấy trong .env")
-        
-        client = OpenAI(api_key=api_key)
-        response = client.chat.completions.create(
-            model=LLM_MODEL,
-            messages=[{"role": "user", "content": prompt}],
-            temperature=0,     # temperature=0 để output ổn định, dễ đánh giá
-            max_tokens=512,
-        )
-        
-        return response.choices[0].message.content
-    
-    except Exception as e:
-        print(f"Lỗi trong call_llm: {e}")
-        raise
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        raise ValueError("OPENAI_API_KEY không tìm thấy trong .env")
+
+    client = OpenAI(api_key=api_key)
+    response = client.chat.completions.create(
+        model=LLM_MODEL,
+        messages=[
+            {
+                "role": "system",
+                "content": "You are a factual company assistant. Answer only from provided context."
+            },
+            {
+                "role": "user",
+                "content": prompt
+            }
+        ],
+        temperature=0,
+        top_p=1.0,
+        max_tokens=512,
+    )
+
+    return response.choices[0].message.content.strip()
 
 
 def rag_answer(
@@ -476,21 +480,33 @@ if __name__ == "__main__":
     print("Sprint 2 + 3: RAG Answer Pipeline")
     print("=" * 60)
 
-    # Test queries từ data/test_questions.json
     test_queries = [
         "SLA xử lý ticket P1 là bao lâu?",
         "Khách hàng có thể yêu cầu hoàn tiền trong bao nhiêu ngày?",
         "Ai phải phê duyệt để cấp quyền Level 3?",
-        "ERR-403-AUTH là lỗi gì?",  # Query không có trong docs → kiểm tra abstain
+        "ERR-403-AUTH là lỗi gì?",
+        "Nếu khách hàng yêu cầu hoàn tiền sau 35 ngày?",
     ]
 
     print("\n--- Sprint 2: Test Baseline (Dense) ---")
-    for query in test_queries:
-        print(f"\nQuery: {query}")
+    for i, query in enumerate(test_queries, 1):
+        print(f"\n[Test {i}] {query}")
         try:
             result = rag_answer(query, retrieval_mode="dense", verbose=True)
-            print(f"Answer: {result['answer']}")
-            print(f"Sources: {result['sources']}")
+            answer = result['answer']
+            sources = result['sources']
+
+            print(f"Answer: {answer}")
+            print(f"Sources: {sources}")
+            print(f"Chunks used: {len(result['chunks_used'])}")
+
+            if "Không đủ dữ liệu" in answer:
+                print("✓ Abstain check: PASS")
+            elif any(f"[{j}]" in answer for j in range(1, 6)) and len(sources) > 0:
+                print("✓ Citation check: PASS")
+            else:
+                print("⚠ Quality check WARN: No clear citation or abstain response")
+
         except NotImplementedError:
             print("Chưa implement — hoàn thành TODO trong retrieve_dense() và call_llm() trước.")
         except Exception as e:
@@ -504,7 +520,7 @@ if __name__ == "__main__":
     print("\n\nViệc cần làm Sprint 2:")
     print("  1. Implement retrieve_dense() — query ChromaDB")
     print("  2. Implement call_llm() — gọi OpenAI hoặc Gemini")
-    print("  3. Chạy rag_answer() với 3+ test queries")
+    print("  3. Chạy rag_answer() với 5 test queries")
     print("  4. Verify: output có citation không? Câu không có docs → abstain không?")
 
     print("\nViệc cần làm Sprint 3:")

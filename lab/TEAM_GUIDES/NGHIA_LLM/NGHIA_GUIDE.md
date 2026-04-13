@@ -11,8 +11,8 @@
 | Sprint | Công việc chính | File chính | Timeline |
 |--------|-----------------|-----------|----------|
 | **Chuẩn bị** | Setup `.env`, test API key | `.env` | T-5 phút |
-| **2** | Implement `call_llm()` | `rag_answer.py` L~293 | 15 phút |
-| **2** | Optimize `build_grounded_prompt()` | `rag_answer.py` L~264 | 15 phút |
+| **2** | Optimize `build_grounded_prompt()` | `rag_answer.py` L~279 | 15 phút |
+| **2** | Implement `call_llm()` | `rag_answer.py` L~308 | 15 phút |
 | **2** | Test generation on 5 queries | `rag_answer.py` main | 10 phút |
 | **3–4** | (Light) prompt tweaking if needed | `rag_answer.py` | 5 phút |
 
@@ -71,7 +71,7 @@ print(f'  Response: {response.choices[0].message.content}')
 
 ### Task 1: Implement `build_grounded_prompt()` (15')
 
-**File:** `lab/rag_answer.py` (Line ~264)
+**File:** `lab/rag_answer.py` (Line ~279)
 
 ```python
 def build_grounded_prompt(query: str, context_block: str) -> str:
@@ -131,7 +131,7 @@ If P1 cannot be resolved within 4 hours, escalate to Level 2 support team.
 
 ### Task 2: Implement `call_llm()` (15')
 
-**File:** `lab/rag_answer.py` (Line ~293)
+**File:** `lab/rag_answer.py` (Line ~308)
 
 ```python
 def call_llm(prompt: str) -> str:
